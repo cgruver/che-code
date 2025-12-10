@@ -9,20 +9,20 @@ import { markdownEscapeEscapedIcons } from '../common/iconLabels.js';
 import { defaultGenerator } from '../common/idGenerator.js';
 import { KeyCode } from '../common/keyCodes.js';
 import { Lazy } from '../common/lazy.js';
-import { DisposableStore } from '../common/lifecycle.js';
+import { DisposableStore, IDisposable } from '../common/lifecycle.js';
 import * as marked from '../common/marked/marked.js';
 import { parse } from '../common/marshalling.js';
 import { FileAccess, Schemas } from '../common/network.js';
 import { cloneAndChange } from '../common/objects.js';
 import { dirname, resolvePath } from '../common/resources.js';
 import { escape } from '../common/strings.js';
-import { URI } from '../common/uri.js';
+import { URI, UriComponents } from '../common/uri.js';
 import * as DOM from './dom.js';
 import * as domSanitize from './domSanitize.js';
 import { convertTagToPlaintext } from './domSanitize.js';
 import { StandardKeyboardEvent } from './keyboardEvent.js';
 import { StandardMouseEvent } from './mouseEvent.js';
-import { renderLabelWithIcons } from './ui/iconLabel/iconLabels.js';
+import { renderIcon, renderLabelWithIcons } from './ui/iconLabel/iconLabels.js';
 
 export type MarkdownActionHandler = (linkContent: string, mdStr: IMarkdownString) => void;
 
@@ -116,12 +116,72 @@ const defaultMarkedRenderers = Object.freeze({
 });
 
 /**
+ * Blockquote renderer that processes GitHub-style alert syntax.
+ * Transforms blockquotes like "> [!NOTE]" into structured alert markup with icons.
+ *
+ * Based on GitHub's alert syntax: https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts
+ */
+function createAlertBlockquoteRenderer(fallbackRenderer: (this: marked.Renderer, token: marked.Tokens.Blockquote) => string) {
+	return function (this: marked.Renderer, token: marked.Tokens.Blockquote): string {
+		const { tokens } = token;
+		// Check if this blockquote starts with alert syntax [!TYPE]
+		const firstToken = tokens[0];
+		if (firstToken?.type !== 'paragraph') {
+			return fallbackRenderer.call(this, token);
+		}
+
+		const paragraphTokens = firstToken.tokens;
+		if (!paragraphTokens || paragraphTokens.length === 0) {
+			return fallbackRenderer.call(this, token);
+		}
+
+		const firstTextToken = paragraphTokens[0];
+		if (firstTextToken?.type !== 'text') {
+			return fallbackRenderer.call(this, token);
+		}
+
+		const pattern = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*?\n*/i;
+		const match = firstTextToken.raw.match(pattern);
+		if (!match) {
+			return fallbackRenderer.call(this, token);
+		}
+
+		// Remove the alert marker from the token
+		firstTextToken.raw = firstTextToken.raw.replace(pattern, '');
+		firstTextToken.text = firstTextToken.text.replace(pattern, '');
+
+		const alertIcons: Record<string, string> = {
+			'note': 'info',
+			'tip': 'light-bulb',
+			'important': 'comment',
+			'warning': 'alert',
+			'caution': 'stop'
+		};
+
+		const type = match[1];
+		const typeCapitalized = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+		const severity = type.toLowerCase();
+		const iconHtml = renderIcon({ id: alertIcons[severity] }).outerHTML;
+
+		// Render the remaining content
+		const content = this.parser.parse(tokens);
+
+		// Return alert markup with icon and severity (skipping the first 3 characters: `<p>`)
+		return `<blockquote data-severity="${severity}"><p><span>${iconHtml}${typeCapitalized}</span>${content.substring(3)}</blockquote>\n`;
+	};
+}
+
+export interface IRenderedMarkdown extends IDisposable {
+	readonly element: HTMLElement;
+}
+
+/**
  * Low-level way create a html element from a markdown string.
  *
  * **Note** that for most cases you should be using {@link import('../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js').MarkdownRenderer MarkdownRenderer}
  * which comes with support for pretty code block rendering and which uses the default way of handling links.
  */
-export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRenderOptions = {}, target?: HTMLElement): { element: HTMLElement; dispose: () => void } {
+export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRenderOptions = {}, target?: HTMLElement): IRenderedMarkdown {
 	const disposables = new DisposableStore();
 	let isDisposed = false;
 
@@ -151,7 +211,7 @@ export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRende
 	}
 
 	const renderedContent = document.createElement('div');
-	const sanitizerConfig = getDomSanitizerConfig(markdown.isTrusted ?? false, options.sanitizerConfig ?? {});
+	const sanitizerConfig = getDomSanitizerConfig(markdown, options.sanitizerConfig ?? {});
 	domSanitize.safeSetInnerHtml(renderedContent, renderedMarkdown, sanitizerConfig);
 
 	// Rewrite links and images before potentially inserting them into the real dom
@@ -171,6 +231,7 @@ export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRende
 				return;
 			}
 			const renderedElements = new Map(tuples);
+			// eslint-disable-next-line no-restricted-syntax
 			const placeholderElements = outElement.querySelectorAll<HTMLDivElement>(`div[data-code]`);
 			for (const placeholderElement of placeholderElements) {
 				const renderedElement = renderedElements.get(placeholderElement.dataset['code'] ?? '');
@@ -182,6 +243,7 @@ export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRende
 		});
 	} else if (syncCodeBlocks.length > 0) {
 		const renderedElements = new Map(syncCodeBlocks);
+		// eslint-disable-next-line no-restricted-syntax
 		const placeholderElements = outElement.querySelectorAll<HTMLDivElement>(`div[data-code]`);
 		for (const placeholderElement of placeholderElements) {
 			const renderedElement = renderedElements.get(placeholderElement.dataset['code'] ?? '');
@@ -193,6 +255,7 @@ export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRende
 
 	// Signal size changes for image tags
 	if (options.asyncRenderCallback) {
+		// eslint-disable-next-line no-restricted-syntax
 		for (const img of outElement.getElementsByTagName('img')) {
 			const listener = disposables.add(DOM.addDisposableListener(img, 'load', () => {
 				listener.dispose();
@@ -223,13 +286,18 @@ export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRende
 	}
 
 	// Remove/disable inputs
+	// eslint-disable-next-line no-restricted-syntax
 	for (const input of [...outElement.getElementsByTagName('input')]) {
 		if (input.attributes.getNamedItem('type')?.value === 'checkbox') {
 			input.setAttribute('disabled', '');
 		} else {
 			if (options.sanitizerConfig?.replaceWithPlaintext) {
 				const replacement = convertTagToPlaintext(input);
-				input.parentElement?.replaceChild(replacement, input);
+				if (replacement) {
+					input.parentElement?.replaceChild(replacement, input);
+				} else {
+					input.remove();
+				}
 			} else {
 				input.remove();
 			}
@@ -246,6 +314,7 @@ export function renderMarkdown(markdown: IMarkdownString, options: MarkdownRende
 }
 
 function rewriteRenderedLinks(markdown: IMarkdownString, options: MarkdownRenderOptions, root: HTMLElement) {
+	// eslint-disable-next-line no-restricted-syntax
 	for (const el of root.querySelectorAll('img, audio, video, source')) {
 		const src = el.getAttribute('src'); // Get the raw 'src' attribute value as text, not the resolved 'src'
 		if (src) {
@@ -267,6 +336,7 @@ function rewriteRenderedLinks(markdown: IMarkdownString, options: MarkdownRender
 		}
 	}
 
+	// eslint-disable-next-line no-restricted-syntax
 	for (const el of root.querySelectorAll('a')) {
 		const href = el.getAttribute('href'); // Get the raw 'href' attribute value as text, not the resolved 'href'
 		el.setAttribute('href', ''); // Clear out href. We use the `data-href` for handling clicks instead
@@ -291,6 +361,10 @@ function createMarkdownRenderer(marked: marked.Marked, options: MarkdownRenderOp
 	renderer.image = defaultMarkedRenderers.image;
 	renderer.link = defaultMarkedRenderers.link;
 	renderer.paragraph = defaultMarkedRenderers.paragraph;
+
+	if (markdown.supportAlertSyntax) {
+		renderer.blockquote = createAlertBlockquoteRenderer(renderer.blockquote);
+	}
 
 	// Will collect [id, renderedElement] tuples
 	const codeBlocks: Promise<[string, HTMLElement]>[] = [];
@@ -437,12 +511,17 @@ function resolveWithBaseUri(baseUri: URI, href: string): string {
 	}
 }
 
+type MdStrConfig = {
+	readonly isTrusted?: boolean | MarkdownStringTrustedOptions;
+	readonly baseUri?: UriComponents;
+};
+
 function sanitizeRenderedMarkdown(
 	renderedMarkdown: string,
-	isTrusted: boolean | MarkdownStringTrustedOptions,
+	originalMdStrConfig: MdStrConfig,
 	options: MarkdownSanitizerConfig = {},
 ): TrustedHTML {
-	const sanitizerConfig = getDomSanitizerConfig(isTrusted, options);
+	const sanitizerConfig = getDomSanitizerConfig(originalMdStrConfig, options);
 	return domSanitize.sanitizeHtml(renderedMarkdown, sanitizerConfig);
 }
 
@@ -480,6 +559,7 @@ export const allowedMarkdownHtmlAttributes = Object.freeze<Array<string | domSan
 	// Custom markdown attributes
 	'data-code',
 	'data-href',
+	'data-severity',
 
 	// Only allow very specific styles
 	{
@@ -508,7 +588,8 @@ export const allowedMarkdownHtmlAttributes = Object.freeze<Array<string | domSan
 	},
 ]);
 
-function getDomSanitizerConfig(isTrusted: boolean | MarkdownStringTrustedOptions, options: MarkdownSanitizerConfig): domSanitize.DomSanitizerConfig {
+function getDomSanitizerConfig(mdStrConfig: MdStrConfig, options: MarkdownSanitizerConfig): domSanitize.DomSanitizerConfig {
+	const isTrusted = mdStrConfig.isTrusted ?? false;
 	const allowedLinkSchemes = [
 		Schemas.http,
 		Schemas.https,
@@ -542,6 +623,7 @@ function getDomSanitizerConfig(isTrusted: boolean | MarkdownStringTrustedOptions
 		allowedLinkProtocols: {
 			override: allowedLinkSchemes,
 		},
+		allowRelativeLinkPaths: !!mdStrConfig.baseUri,
 		allowedMediaProtocols: {
 			override: [
 				Schemas.http,
@@ -553,6 +635,7 @@ function getDomSanitizerConfig(isTrusted: boolean | MarkdownStringTrustedOptions
 				Schemas.vscodeRemoteResource,
 			]
 		},
+		allowRelativeMediaPaths: !!mdStrConfig.baseUri,
 		replaceWithPlaintext: options.replaceWithPlaintext,
 	};
 }
@@ -577,7 +660,7 @@ export function renderAsPlaintext(str: IMarkdownString | string, options?: {
 	}
 
 	const html = marked.parse(value, { async: false, renderer: options?.includeCodeBlocksFences ? plainTextWithCodeBlocksRenderer.value : plainTextRenderer.value });
-	return sanitizeRenderedMarkdown(html, /* isTrusted */ false, {})
+	return sanitizeRenderedMarkdown(html, { isTrusted: false }, {})
 		.toString()
 		.replace(/&(#\d+|[a-zA-Z]+);/g, m => unescapeInfo.get(m) ?? m)
 		.trim();
@@ -935,7 +1018,7 @@ function completeWithString(tokens: marked.Token[] | marked.Token, closingString
 	// If it was completed correctly, this should be a single token.
 	// Expecting either a Paragraph or a List
 	const trimmedRawText = shouldTrim ? mergedRawText.trimEnd() : mergedRawText;
-	return marked.lexer(trimmedRawText + closingString)[0] as marked.Token;
+	return marked.lexer(trimmedRawText + closingString)[0];
 }
 
 function completeTable(tokens: marked.Token[]): marked.Token[] | undefined {
@@ -977,4 +1060,3 @@ function completeTable(tokens: marked.Token[]): marked.Token[] | undefined {
 
 	return undefined;
 }
-

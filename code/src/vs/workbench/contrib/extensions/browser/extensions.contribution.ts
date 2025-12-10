@@ -25,7 +25,7 @@ import { Extensions as ConfigurationExtensions, ConfigurationScope, IConfigurati
 import { ContextKeyExpr, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IDialogService, IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { ExtensionGalleryManifestStatus, ExtensionGalleryResourceType, ExtensionGalleryServiceUrlConfigKey, getExtensionGalleryManifestResourceUri, IExtensionGalleryManifest, IExtensionGalleryManifestService } from '../../../../platform/extensionManagement/common/extensionGalleryManifest.js';
-import { EXTENSION_INSTALL_SOURCE_CONTEXT, ExtensionInstallSource, ExtensionsLocalizedLabel, FilterType, IExtensionGalleryService, IExtensionManagementService, PreferencesLocalizedLabel, SortBy, VerifyExtensionSignatureConfigKey } from '../../../../platform/extensionManagement/common/extensionManagement.js';
+import { EXTENSION_INSTALL_SOURCE_CONTEXT, ExtensionInstallSource, ExtensionRequestsTimeoutConfigKey, ExtensionsLocalizedLabel, FilterType, IExtensionGalleryService, IExtensionManagementService, PreferencesLocalizedLabel, SortBy, VerifyExtensionSignatureConfigKey } from '../../../../platform/extensionManagement/common/extensionManagement.js';
 import { areSameExtensions, getIdAndVersion } from '../../../../platform/extensionManagement/common/extensionManagementUtil.js';
 import { ExtensionStorageService } from '../../../../platform/extensionManagement/common/extensionStorage.js';
 import { IExtensionRecommendationNotificationService } from '../../../../platform/extensionRecommendations/common/extensionRecommendations.js';
@@ -291,13 +291,27 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 				included: false,
 				policy: {
 					name: 'ExtensionGalleryServiceUrl',
+					category: PolicyCategory.Extensions,
 					minimumVersion: '1.99',
+					localization: {
+						description: {
+							key: 'extensions.gallery.serviceUrl',
+							value: localize('extensions.gallery.serviceUrl', "Configure the Marketplace service URL to connect to"),
+						}
+					}
 				},
 			},
 			'extensions.supportNodeGlobalNavigator': {
 				type: 'boolean',
 				description: localize('extensionsSupportNodeGlobalNavigator', "When enabled, Node.js navigator object is exposed on the global scope."),
 				default: false,
+			},
+			[ExtensionRequestsTimeoutConfigKey]: {
+				type: 'number',
+				description: localize('extensionsRequestTimeout', "Controls the timeout in milliseconds for HTTP requests made when fetching extensions from the Marketplace"),
+				default: 60_000,
+				scope: ConfigurationScope.APPLICATION,
+				tags: ['advanced', 'usesOnlineServices']
 			},
 		}
 	});
@@ -521,7 +535,7 @@ async function runAction(action: IAction): Promise<void> {
 
 type IExtensionActionOptions = IAction2Options & {
 	menuTitles?: { [id: string]: string };
-	run(accessor: ServicesAccessor, ...args: any[]): Promise<any>;
+	run(accessor: ServicesAccessor, ...args: unknown[]): Promise<any>;
 };
 
 class ExtensionsContributions extends Disposable implements IWorkbenchContribution {
@@ -1960,7 +1974,7 @@ class ExtensionsContributions extends Disposable implements IWorkbenchContributi
 					menu: menusWithOutTitles
 				});
 			}
-			run(accessor: ServicesAccessor, ...args: any[]): Promise<any> {
+			run(accessor: ServicesAccessor, ...args: unknown[]): Promise<any> {
 				return extensionActionOptions.run(accessor, ...args);
 			}
 		}));
