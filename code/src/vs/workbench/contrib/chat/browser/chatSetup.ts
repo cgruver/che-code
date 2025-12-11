@@ -843,14 +843,12 @@ class ChatSetup {
 				buttons = coalesce([
 					defaultProviderButton,
 					googleProviderButton,
-					appleProviderButton,
 					enterpriseProviderLink
 				]);
 			} else {
 				buttons = coalesce([
 					enterpriseProviderButton,
 					googleProviderButton,
-					appleProviderButton,
 					defaultProviderLink
 				]);
 			}

@@ -6,7 +6,6 @@
 import { env } from '../../../base/common/process.js';
 import { IProductConfiguration } from '../../../base/common/product.js';
 import { ISandboxConfiguration } from '../../../base/parts/sandbox/common/sandboxTypes.js';
-import { loadFromFileSystem } from './che/product.js';
 /**
  * @deprecated It is preferred that you use `IProductService` if you can. This
  * allows web embedders to override our defaults. But for things like `product.quality`,
