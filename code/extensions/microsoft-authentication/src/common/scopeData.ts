@@ -3,9 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Uri } from 'vscode';
+import { env } from 'process';
+import { ProcessExecution, Uri } from 'vscode';
 
-const DEFAULT_CLIENT_ID = 'aebc6443-996d-45c2-90f0-388ff96faa56';
+// const DEFAULT_CLIENT_ID = 'aebc6443-996d-45c2-90f0-388ff96faa56';
 const DEFAULT_TENANT = 'organizations';
 
 const OIDC_SCOPES = ['openid', 'email', 'profile', 'offline_access'];
@@ -57,6 +58,11 @@ export class ScopeData {
 	}
 
 	private getClientId(scopes: string[]): string {
+
+		let DEFAULT_CLIENT_ID = 'Client ID Not Set';
+		if(env.VSCODE_CLIENT_ID) {
+			DEFAULT_CLIENT_ID = env.VSCODE_CLIENT_ID;
+		}
 		return scopes.reduce<string | undefined>((prev, current) => {
 			if (current.startsWith('VSCODE_CLIENT_ID:')) {
 				return current.split('VSCODE_CLIENT_ID:')[1];
