@@ -79,6 +79,21 @@ else {
 				serviceUrl: 'https://open-vsx.org/vscode/gallery',
 				itemUrl: 'https://open-vsx.org/vscode/item',
 			},
+			defaultChatAgent: {
+				extensionId: 'GitHub.copilot',
+				chatExtensionId: 'GitHub.copilot-chat',
+				provider: {
+					default: {
+						id: 'github',
+						name: 'GitHub',
+					},
+					enterprise: {
+						id: 'github-enterprise',
+						name: 'GitHub Enterprise',
+					}
+				},
+				providerScopes: []
+			}
 		});
 	}
 }
